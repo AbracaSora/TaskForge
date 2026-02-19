@@ -1,0 +1,9 @@
+{
+    "python.languageServer": "None",
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.idea": true,
+        "**/.ruff_cache": true,
+        "**/.vscode": true
+    }
+}
