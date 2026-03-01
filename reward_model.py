@@ -193,6 +193,12 @@ class SequenceRewardModel(RewardModelBase):
     def forward(self, replies: List[str]) -> float:
         return self.score(replies)
 
+    def get_actions_sequence(self, replies: List[str]) -> List[str]:
+        actions_per_utt = judge_replies(
+            replies, client=self._client, model=self._model_name
+        )
+        return actions_per_utt
+
     def score(self, replies: List[str]) -> float:
         actions_per_utt = judge_replies(
             replies, client=self._client, model=self._model_name

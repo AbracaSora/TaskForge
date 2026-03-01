@@ -211,7 +211,7 @@ class ClassroomSceneGenerationTask(Task):
         grade: str = "高中一年级",
         max_turns: int = 50,
         max_tokens: int = 4096,
-        temperature: float = 0.2,
+        temperature: float = 0.8,
     ):
         super().__init__()
         self.topic = topic
@@ -362,8 +362,17 @@ class ClassroomSceneGenerationTask(Task):
 
 
 if __name__ == "__main__":
-    task = ClassroomSceneGenerationTask()
-    model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-14B", device_map="auto")
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-14B", device_map="auto")
-    out = task.run(model, tokenizer)
-    print(out)
+    import json
+    DATA_DIR = "./expert_sample"
+    OUTPUT_DIR = "./non_expert_sample_out"
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    files = os.listdir(DATA_DIR)
+    model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-8B", device_map="auto")
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B", device_map="auto")
+    for file in files:
+        with open(os.path.join(DATA_DIR, file), "r") as f:
+            data = json.load(f)
+            task = ClassroomSceneGenerationTask(topic=data["name"], subject=data["subject"], grade=data["grade"])
+            out = task.run(model, tokenizer)
+            with open(os.path.join(OUTPUT_DIR, file.replace(".json", "_out.json")), "w", encoding="utf-8") as f:
+                json.dump(out, f, ensure_ascii=False, indent=4)
