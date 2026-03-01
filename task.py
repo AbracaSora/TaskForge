@@ -105,7 +105,7 @@ class Task(ABC):
         prompt: Union[str, dict, list],
         *,
         max_tokens: int = 4096,
-        temperature: float = 0.2,
+        temperature: float = 0.7,
         model_id: str = "local",
     ) -> Any:
         """
@@ -131,7 +131,9 @@ class Task(ABC):
         m = model
         text = self._parse_messages_to_prompt(prompt, tokenizer)["text"]
 
-        model_inputs = tok([text], return_tensors="pt").to("cuda")
+        model_inputs = tok([text], return_tensors="pt").to(
+            model.device
+        )
         prompt_tokens = model_inputs["input_ids"].shape[-1]
         with torch.no_grad():
             generated_ids = m.generate(
@@ -139,7 +141,7 @@ class Task(ABC):
                 max_new_tokens=max_tokens,
                 do_sample=temperature > 0,
                 temperature=temperature if temperature > 0 else 1.0,
-                top_p=0.9,
+                top_p=0.95,
                 pad_token_id=tok.pad_token_id,
                 eos_token_id=tok.eos_token_id,
             )
@@ -175,16 +177,24 @@ class Task(ABC):
 
 
 # 课堂场景生成（模仿 Agent.py 的提示与流程，用 _invoke 调用模型）
+# 专业课程结构参考：4703_数学_初三.json（相似三角形的周长比与面积比）等真实课堂 transcript
 CLASSROOM_STYLE_GUIDE = """
-【开场】真实课堂常以「老师：上课。」「学生：起立，老师好。」开场；随后老师可问预习、引入课题等。
-【发言风格】学生可极简短（如「对。」「1。」「不全面。」）；老师可点名「你来说」「谁来补充」；内容需贴合当前科目与课堂主题。
-【结束】课堂结束时常为老师布置作业或说「下课」、学生「起立，老师再见」。
+你是一名教育专家，正在模拟一堂真实课堂的对话，根据已有对话生成**唯一的下一条**发言。参考真实课堂的课程结构。
 
-<角色>:<内容>视为一条发言，不要有任何分析、说明或复述题目。
-输出要求：
-- 只输出一行，格式为：老师：<内容> 或 学生：<内容>，由上下文决定谁说话。
-- 学生可极简短（如「对。」「好的。」）；老师可点名；内容贴合科目与主题。
-- 禁止输出「老师：发言内容」「学生：发言内容」等占位符；禁止输出「好的，我需要分析…」「根据当前对话，生成…」等。直接以「老师：」或「学生：」开头。
+【课程结构（参考专业课堂实录）】
+- 开场：学生「老师好。」→ 老师「同学们好，请坐。我们前面学了…请大家回顾一下…你来说。」
+- 回顾与引入：老师可连续多句（如先请学生回顾旧知，再引入今日课题、读题或讲解题干）。
+- 师生问答：老师提问→学生答→老师可**连续发言**（如先反馈「非常好」「是的」再追问「理由呢？」「等于多少？」；或先讲解/读题再追问「相似吗？为什么？」）；再学生答→老师总结或提新问。
+- 同一角色可连续发言：老师可连续多条（讲解、追问、点名、认同、总结）；学生也可连续（如多人依次回答时）。由上下文自然决定谁接着说话。
+- 推进与结束：课堂应有递进（回顾→新知识→例题/练习→小结），结尾老师布置作业或「下课」，学生「老师再见」。
+
+【发言类型参考】
+- 老师：回顾提问、讲解/读题、追问（「理由呢？」「对吗？」「等于多少？」）、认同（「非常好」「是的」）、指导（「好，张毅。」）、总结（「我们把这个过程整理整理…所以？」）。可点名、可连续讲解再追问。
+- 学生：简洁作答（「对。」「1:2。」「相似比。」）或稍长解释（推理、读题结论）。可表示不懂（「能再讲一下吗？」）。
+
+【格式与禁止】
+- 仅输出一行，格式：老师：<内容> 或 学生：<内容>。根据上下文决定发言者，同一角色可连续。
+- 禁止占位符、禁止「根据对话我生成…」等元语言。不要无意义重复同一问句或同一句话。
 """
 
 
@@ -269,24 +279,25 @@ class ClassroomSceneGenerationTask(Task):
             if "下课" in next_utterance or "再见" in next_utterance:
                 break
 
-        initial_prompt = self._parse_messages_to_prompt(
-            self.full_dialogue[:1], tokenizer
-        )["text"]
-        query_t = tokenizer(initial_prompt, return_tensors="pt").to("cuda")
-        response = self._parse_messages_to_prompt(self.full_dialogue[1:], tokenizer)[
-            "text"
-        ]
-        response_t = tokenizer(response, return_tensors="pt").to("cuda")
-        reward = self.reward_model.score(dialogue)
+        # initial_prompt = self._parse_messages_to_prompt(
+        #     self.full_dialogue[:1], tokenizer
+        # )["text"]
+        # query_t = tokenizer(initial_prompt, return_tensors="pt").to("cuda")
+        # response = self._parse_messages_to_prompt(self.full_dialogue[1:], tokenizer)[
+        #     "text"
+        # ]
+        # response_t = tokenizer(response, return_tensors="pt").to("cuda")
+        # reward = self.reward_model.score(dialogue)
 
         return {
             "dialogue": dialogue,
+            "full_dialogue": self.full_dialogue,
             "topic": self.topic,
             "subject": self.subject,
             "grade": self.grade,
-            "query_tensors": query_t,
-            "response_tensors": response_t,
-            "reward": reward,
+            # "query_tensors": query_t,
+            # "response_tensors": response_t,
+            # "reward": reward,
         }
 
     def _build_first_utterance_prompt(
@@ -314,20 +325,21 @@ class ClassroomSceneGenerationTask(Task):
         subject: str = "",
         grade: str = "",
     ) -> str:
-        ctx = "\n".join(dialogue_so_far[-12:]) if dialogue_so_far else ""
+        ctx = "\n".join(dialogue_so_far[-14:]) if dialogue_so_far else ""
         course_line = (
             f"\n当前课堂：{' '.join(p for p in [subject, grade, topic] if p)}\n"
             if (subject or grade or topic)
             else ""
         )
-        prompt = f"""根据下面已有对话，直接输出**下一条**发言（仅老师或学生一方的一条），不要有任何分析、说明或复述题目。
+        prompt = f"""根据下面已有对话，直接输出**下一条**发言（仅一条），不要有任何分析、说明或复述题目。
 {course_line}
 已有对话：
 {ctx}
+
 输出要求：
-- 只输出一行，格式为：老师：<内容> 或 学生：<内容>，由上下文决定谁说话。
-- 学生可极简短（如「对。」「好的。」）；老师可点名；内容贴合科目与主题。
-- 禁止输出「老师：发言内容」「学生：发言内容」等占位符；禁止输出「好的，我需要分析…」「根据当前对话，生成…」等。直接以「老师：」或「学生：」开头。"""
+- 只输出一行，格式：老师：<内容> 或 学生：<内容>。**由上下文自然决定**是老师还是学生；**同一角色可以连续发言**（例如老师连续讲解与追问、先反馈再提新问，或学生多人依次回答）。
+- 老师可：回顾提问、读题/讲解、追问（理由呢？等于多少？）、认同（非常好）、点名、总结。学生可极简短（「对。」「1:2。」）或稍长解释。内容贴合当前科目与主题，课堂有递进感。
+- 禁止占位符与元语言。不要无意义重复同一问句。直接以「老师：」或「学生：」开头。"""
         return {
             "messages": [
                 {"role": "system", "content": CLASSROOM_STYLE_GUIDE},
@@ -349,234 +361,9 @@ class ClassroomSceneGenerationTask(Task):
         return "学生：好的。" if default_speaker == "学生" else "老师：请继续。"
 
 
-def load_courses(course_path: Union[str, Path], course_ids: List[int] = None) -> List[dict]:
-    """从 JSON 文件加载课程列表，可选按 id 过滤。"""
-    path = Path(course_path)
-    if not path.exists():
-        raise FileNotFoundError(f"课程文件不存在: {path}")
-    with open(path, "r", encoding="utf-8") as f:
-        courses = json.load(f)
-    if course_ids is not None:
-        id_set = set(course_ids)
-        courses = [c for c in courses if c.get("id") in id_set]
-    return courses
-
-
-def _parse_dialogue_from_text(text: str) -> List[str]:
-    """从整段文本解析出 老师/学生 发言列表，供 SequenceRewardModel 使用。"""
-    out = []
-    text = (text or "").strip()
-    for part in re.split(r"(?=老师：|学生：)", text):
-        part = part.strip()
-        if part.startswith("老师：") or part.startswith("学生："):
-            out.append(part[:80] if len(part) > 80 else part)
-    return out if out else ["老师：" + text[:80] if text else "老师：上课。"]
-
-
-def _build_ppo_dataset(courses: List[dict], tokenizer: Any, style_guide: str) -> "Dataset":
-    """为 experimental PPO 构建 Dataset：每门课一条，input_ids 为第一句发言的 prompt。"""
-    from datasets import Dataset
-
-    rows = []
-    for c in courses:
-        topic = c.get("topic", "")
-        subject = c.get("subject", "")
-        grade = c.get("grade", "")
-        prompt_dict = {
-            "messages": [
-                {"role": "system", "content": style_guide},
-                {
-                    "role": "user",
-                    "content": f"""你正在模拟一堂课的对话。根据以下信息，直接输出老师的**第一句发言**，不要有任何分析、说明或复述题目。
-课堂主题：{topic}；科目：{subject}；年级：{grade}
-输出要求：只输出一行，格式为：老师：<真实发言内容>。直接以「老师：」开头。""",
-                },
-            ],
-        }
-        try:
-            text = tokenizer.apply_chat_template(
-                prompt_dict["messages"],
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
-        except TypeError:
-            text = tokenizer.apply_chat_template(
-                prompt_dict["messages"],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-        enc = tokenizer(
-            text,
-            return_tensors="pt",
-            truncation=True,
-            max_length=2048,
-        )
-        rows.append({
-            "input_ids": enc["input_ids"][0].tolist(),
-            "attention_mask": enc["attention_mask"][0].tolist(),
-        })
-    return Dataset.from_list(rows)
-
-
-class _CaptureInputWrapper(torch.nn.Module):
-    """包装 backbone：在 forward 时保存 input_ids，供后续 score 解码用。"""
-
-    def __init__(self, backbone: torch.nn.Module):
-        super().__init__()
-        self._model = backbone
-        self._last_input_ids = None
-
-    def forward(self, input_ids=None, **kwargs):
-        if input_ids is not None:
-            self._last_input_ids = input_ids.detach().clone()
-        kwargs.setdefault("output_hidden_states", True)
-        return self._model(input_ids=input_ids, **kwargs)
-
-
-class _SequenceRewardModelWrapper(torch.nn.Module):
-    """
-    适配 trl.experimental.ppo 的 reward_model：需具备 base_model_prefix 与 score(hidden_states)。
-    内部用 ref_model 做 backbone（仅跑 forward 取 hidden_states），score 时用 last_input_ids
-    解码后交给 SequenceRewardModel 打分。
-    """
-
-    base_model_prefix = "pretrained_model"
-
-    def __init__(self, ref_backbone: torch.nn.Module, tokenizer: Any):
-        super().__init__()
-        self.pretrained_model = _CaptureInputWrapper(ref_backbone)
-        self.tokenizer = tokenizer
-        self._reward_model = SequenceRewardModel()
-
-    def score(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        device = hidden_states.device
-        batch_size, seq_len = hidden_states.shape[0], hidden_states.shape[1]
-        if getattr(self.pretrained_model, "_last_input_ids", None) is None:
-            return torch.zeros(batch_size, seq_len, 1, device=device, dtype=hidden_states.dtype)
-        input_ids = self.pretrained_model._last_input_ids
-        rewards = []
-        for i in range(input_ids.size(0)):
-            text = self.tokenizer.decode(input_ids[i], skip_special_tokens=True)
-            dialogue = _parse_dialogue_from_text(text)
-            r = self._reward_model.score(dialogue)
-            rewards.append(float(r))
-        r_tensor = torch.tensor(rewards, device=device, dtype=hidden_states.dtype)
-        return r_tensor.view(-1, 1).expand(-1, seq_len).unsqueeze(-1)
-
-
-def run_one_training(
-    courses: List[dict],
-    model_name: str = "Qwen/Qwen3-14B",
-    max_turns: int = 50,
-    max_tokens: int = 4096,
-    temperature: float = 0.2,
-    output_dir: Union[str, Path] = ".",
-    save_model: bool = True,
-) -> dict:
-    """
-    使用 trl.experimental.ppo 新 API 完成一次训练：按课程列表构建 Dataset，
-    用 PPOTrainer.train() 做 PPO，reward 由 SequenceRewardModel 通过包装器提供。
-    """
-    from datasets import Dataset as HfDataset
-    from trl.experimental.ppo import (
-        PPOConfig,
-        PPOTrainer,
-        AutoModelForCausalLMWithValueHead,
-    )
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_dir_str = str(output_dir.resolve())
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    # 策略模型、参考模型、价值模型、奖励包装（复用 ref 做 backbone）
-    policy_model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
-    ref_model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
-    value_model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
-    reward_model = _SequenceRewardModelWrapper(ref_model, tokenizer)
-    reward_model = reward_model.to("cuda")
-
-    # 数据集：每门课一条 prompt（第一句发言）
-    train_dataset = _build_ppo_dataset(courses, tokenizer, CLASSROOM_STYLE_GUIDE)
-    n_courses = len(train_dataset)
-    eval_dataset = HfDataset.from_dict(train_dataset[: min(2, n_courses)]) if n_courses else train_dataset
-
-    # 新 API：第一个参数是 args（PPOConfig），且需提供 reward_model / train_dataset / value_model
-    ppo_config = PPOConfig(
-        output_dir=output_dir_str,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=4,
-        learning_rate=1.41e-5,
-        num_train_epochs=1,
-        response_length=min(256, max_tokens),
-        temperature=temperature,
-        num_mini_batches=1,
-        bf16=True,
-        remove_unused_columns=False,
-    )
-    ppo_trainer = PPOTrainer(
-        args=ppo_config,
-        ref_model=ref_model,
-        reward_model=reward_model,
-        train_dataset=train_dataset,
-        value_model=value_model,
-        eval_dataset=eval_dataset,
-    )
-
-    ppo_trainer.train()
-
-    out_ts = time.strftime("%Y%m%d%H%M%S")
-    result_path = output_dir / f"result_{out_ts}.json"
-    all_results = [
-        {
-            "course_id": courses[i].get("id", i + 1),
-            "topic": courses[i].get("topic", ""),
-            "subject": courses[i].get("subject", ""),
-            "grade": courses[i].get("grade", ""),
-        }
-        for i in range(len(courses))
-    ]
-    with open(result_path, "w", encoding="utf-8") as f:
-        json.dump(all_results, f, ensure_ascii=False, indent=2)
-    print(f"结果已保存: {result_path}")
-
-    if save_model:
-        model_dir = output_dir / f"ppo_{out_ts}"
-        model_dir.mkdir(parents=True, exist_ok=True)
-        ppo_trainer.save_model(str(model_dir))
-        tokenizer.save_pretrained(str(model_dir))
-        print(f"模型已保存: {model_dir}")
-
-    return {"results": all_results, "result_path": str(result_path)}
-
-
 if __name__ == "__main__":
-    # 硬编码配置
-    COURSE_JSON = Path(__file__).resolve().parent / "course.json"
-    COURSE_IDS = None  # 使用全部课程；若只训练部分课程可写 [1, 2, 3]
-    MODEL_NAME = "Qwen/Qwen3-8B"
-    MAX_TURNS = 50
-    MAX_TOKENS = 4096
-    TEMPERATURE = 0.2
-    OUTPUT_DIR = Path(__file__).resolve().parent / "result"
-    SAVE_MODEL = True
-
-    courses = load_courses(COURSE_JSON, course_ids=COURSE_IDS)
-    if not courses:
-        print("未找到任何课程，请检查课程文件路径或 COURSE_IDS")
-        exit(1)
-    print(f"共加载 {len(courses)} 门课程，开始一次训练...")
-
-    run_one_training(
-        courses=courses,
-        model_name=MODEL_NAME,
-        max_turns=MAX_TURNS,
-        max_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
-        output_dir=OUTPUT_DIR,
-        save_model=SAVE_MODEL,
-    )
+    task = ClassroomSceneGenerationTask()
+    model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-14B", device_map="auto")
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-14B", device_map="auto")
+    out = task.run(model, tokenizer)
+    print(out)

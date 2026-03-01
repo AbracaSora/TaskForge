@@ -8,7 +8,6 @@ import torch.nn.functional as F
 from pyparsing import actions
 
 from AutomatonStruct import alphabet, states, transitions
-from ExpertSeq import get_expert_seqs
 
 
 class NPA(nn.Module):
@@ -143,7 +142,7 @@ class NPA(nn.Module):
             prob = self.transition_prob(
                 torch.full((B,), q, device=state_dist.device), actions
             )
-
+            print(prob.shape)
             next_dist += state_dist[:, q : q + 1] * prob
 
         return next_dist
@@ -352,6 +351,8 @@ def print_transition_table(model, state_names, action_names):
 
 
 if __name__ == "__main__":
+    from ExpertSeq import get_expert_seqs
+
     alphabet_to_index = {a: i for i, a in enumerate(sorted(alphabet))}
     state_to_index = {s: i for i, s in enumerate(sorted(states))}
 
